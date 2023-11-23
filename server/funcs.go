@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"mycrud/bank"
 	"net/http"
 	"strconv"
@@ -20,9 +20,10 @@ type user struct {
 // Criacao de um novo usuario
 
 func CreateUser(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.Write([]byte("Failed to load request body"))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 
 	}
@@ -30,12 +31,14 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.Unmarshal(body, &user); err != nil {
 		w.Write([]byte("Failed to Unmarshal json"))
+		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 
 	}
 	db, err := bank.Connect()
 	if err != nil {
 		w.Write([]byte("Failed to connect Db."))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -44,6 +47,7 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	statement, err := db.Prepare("insert into usuarios(name,email) values(?,?)")
 	if err != nil {
 		w.Write([]byte("Failed to prepare statement"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 
 	}
@@ -52,12 +56,14 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	result, err := statement.Exec(user.Name, user.Email)
 	if err != nil {
 		w.Write([]byte("Failed to execute statement"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	id, err := result.LastInsertId()
 	if err != nil {
 		w.Write([]byte("Failed to recover last Id"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.Write([]byte(fmt.Sprintf("User %d created", id)))
@@ -73,17 +79,20 @@ func SearchUser(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		w.Write([]byte("Failed to convert ID"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	db, err := bank.Connect()
 	if err != nil {
 		w.Write([]byte("Failed to load database"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer db.Close()
 	result, err := db.Query("select * from usuarios where id=?", ID)
 	if err != nil {
 		w.Write([]byte("Failed to perform SQL Query"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 
 	}
@@ -92,12 +101,14 @@ func SearchUser(w http.ResponseWriter, r *http.Request) {
 		error := result.Scan(&user.ID, &user.Name, &user.Email)
 		if error != nil {
 			w.Write([]byte("Failed to scan query results"))
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 	}
 	err = json.NewEncoder(w).Encode(user)
 	if err != nil {
 		w.Write([]byte("Failed to encode Json"))
+		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -111,6 +122,7 @@ func ShowUsers(w http.ResponseWriter, r *http.Request) {
 	db, err := bank.Connect()
 	if err != nil {
 		w.Write([]byte("Fail to Connect Db"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer db.Close()
@@ -118,6 +130,7 @@ func ShowUsers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 
 		w.Write([]byte("Error in SQL query()"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -126,6 +139,7 @@ func ShowUsers(w http.ResponseWriter, r *http.Request) {
 		err := results.Scan(&user.ID, &user.Name, &user.Email)
 		if err != nil {
 			w.Write([]byte("Failed to scan query results"))
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
@@ -133,7 +147,9 @@ func ShowUsers(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	json.NewEncoder(w).Encode(users)
+	if err := json.NewEncoder(w).Encode(users); err != nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}
 
 }
 
@@ -144,12 +160,14 @@ func AlterUser(w http.ResponseWriter, r *http.Request) {
 	ID, err := strconv.ParseUint(parameters["id"], 10, 32)
 	if err != nil {
 		w.Write([]byte("Failed to convert ID into uint"))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.Write([]byte("Failed to read request body"))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var user user
@@ -161,6 +179,7 @@ func AlterUser(w http.ResponseWriter, r *http.Request) {
 	db, err := bank.Connect()
 	if err != nil {
 		w.Write([]byte("Failed to connect Db"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer db.Close()
@@ -168,10 +187,12 @@ func AlterUser(w http.ResponseWriter, r *http.Request) {
 	statement, err := db.Prepare("update usuarios set name = ?,email= ? where id = ?")
 	if err != nil {
 		w.Write([]byte("Failed to create statement"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	if _, err := statement.Exec(user.Name, user.Email, ID); err != nil {
 		w.Write([]byte("Failed to execute Sql Query"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -184,18 +205,21 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	ID, err := strconv.ParseUint(parameters["id"], 10, 32)
 	if err != nil {
 		w.Write([]byte("Failed to convert ID"))
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	db, err := bank.Connect()
 	if err != nil {
 		w.Write([]byte("Failed to connect Db"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer db.Close()
 	statement, err := db.Prepare("delete from usuarios where id=?")
 	if err != nil {
 		w.Write([]byte("Failed to create Sql statement"))
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer statement.Close()
